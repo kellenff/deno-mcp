@@ -1,5 +1,6 @@
 export { McpServer } from "./src/server/mcp_server.ts";
 export type {
+  McpServerHttpOptions,
   McpServerOptions,
   PromptOptions,
   ResourceOptions,
@@ -18,6 +19,8 @@ export type {
 
 export { StdioTransport } from "./src/transport/stdio.ts";
 export type { StdioTransportOptions } from "./src/transport/stdio.ts";
+export { StreamableHttpServer } from "./src/transport/streamable_http.ts";
+export type { StreamableHttpOptions } from "./src/transport/streamable_http.ts";
 export type { Transport } from "./src/transport/transport.ts";
 
 export { ErrorCode, McpError } from "./src/protocol/errors.ts";

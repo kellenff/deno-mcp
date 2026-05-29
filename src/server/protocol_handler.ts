@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ErrorCode, McpError } from "../protocol/errors.ts";
-import { isNotification, isRequest } from "../protocol/json_rpc.ts";
+import { isNotification, isRequest, isResponse } from "../protocol/json_rpc.ts";
 import {
   type CallToolParams,
   type CallToolResult,
@@ -80,6 +80,52 @@ export class ProtocolHandler {
 
   registerPrompt(prompt: RegisteredPrompt): void {
     this.prompts.set(prompt.definition.name, prompt);
+  }
+
+  /** Clone registrations into a fresh handler for an isolated HTTP session. */
+  fork(): ProtocolHandler {
+    const handler = new ProtocolHandler(this.options);
+    for (const tool of this.tools.values()) {
+      handler.registerTool(tool);
+    }
+    for (const resource of this.resources.values()) {
+      handler.registerResource(resource);
+    }
+    for (const prompt of this.prompts.values()) {
+      handler.registerPrompt(prompt);
+    }
+    return handler;
+  }
+
+  /**
+   * Process a single inbound message and return an outbound JSON-RPC response,
+   * or null for notifications and client responses (HTTP 202).
+   */
+  async processMessage(message: JSONRPCMessage): Promise<JSONRPCMessage | null> {
+    if (isNotification(message)) {
+      if (message.method === "notifications/initialized") {
+        this.sessionInitialized = true;
+      }
+      return null;
+    }
+
+    if (isResponse(message)) {
+      return null;
+    }
+
+    if (!isRequest(message)) return null;
+
+    try {
+      const result = await this.handleRequest(message as JSONRPCRequest);
+      return { jsonrpc: "2.0", id: (message as JSONRPCRequest).id, result };
+    } catch (error) {
+      const mcpError = toMcpError(error);
+      return {
+        jsonrpc: "2.0",
+        id: (message as JSONRPCRequest).id,
+        error: mcpError.toJSONRPCError(),
+      };
+    }
   }
 
   async connect(transport: Transport): Promise<void> {

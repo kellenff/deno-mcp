@@ -1,12 +1,7 @@
-```bash
-deno-mcp run --allow-read=./data ./server.ts
-```
-
-> This script gets filesystem access only because you said so.
-
 # deno-mcp - Deno-native MCP with a default-deny sandbox
 
-Ship [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers in Deno. Permissions are opt-in, not inherited.
+Ship [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers in Deno. Permissions
+are opt-in, not inherited.
 
 Built on Web Streams and Deno's permission model. No Node shims.
 
@@ -55,7 +50,8 @@ No `--allow-*` flags. The server starts with no filesystem, network, or env acce
 
 ### Permission profiles in deno.json
 
-This repo ships a named profile. That is what "Deno-native" means here: permissions live in config, not in ad hoc shell flags.
+This repo ships a named profile. That is what "Deno-native" means here: permissions live in config,
+not in ad hoc shell flags.
 
 ```json
 {
@@ -101,17 +97,43 @@ Run it:
 deno-mcp run ./my_server.ts
 ```
 
+### Serve over HTTP (Streamable HTTP, JSON mode)
+
+Remote MCP clients can connect over HTTP instead of stdio. This implements
+[Streamable HTTP](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports) with
+JSON responses (no SSE streaming yet).
+
+```typescript
+if (import.meta.main) {
+  await server.serveHttp({ port: 3000 });
+}
+```
+
+Run with network permission:
+
+```bash
+deno run --allow-net=127.0.0.1:3000 ./my_server_http.ts
+# or
+deno task dev:http
+```
+
+Defaults: binds to `127.0.0.1`, endpoint `/mcp`, session IDs via `Mcp-Session-Id` header. GET
+returns 405 (SSE not offered in this mode). For remote deployment, add auth and TLS at a reverse
+proxy.
+
+See [`examples/echo_server_http.ts`](examples/echo_server_http.ts).
+
 ## Default-deny sandbox
 
 You already saw the flags. Here is what they enforce.
 
-| Principle | Detail |
-| --------- | ------ |
-| Default deny | `deno-mcp run` grants zero permissions unless you pass `--allow-*` or `-P=` |
-| No prompts | `--no-prompt` is always injected. MCP clients use non-TTY stdio |
-| Stdout is protocol | Never log to stdout. Use `log()` from the `/log` export (stderr) |
-| Warn on `-A` | CLI warns when `--allow-all` is used |
-| Message size cap | 10 MiB max per JSON-RPC line |
+| Principle          | Detail                                                                      |
+| ------------------ | --------------------------------------------------------------------------- |
+| Default deny       | `deno-mcp run` grants zero permissions unless you pass `--allow-*` or `-P=` |
+| No prompts         | `--no-prompt` is always injected. MCP clients use non-TTY stdio             |
+| Stdout is protocol | Never log to stdout. Use `log()` from the `/log` export (stderr)            |
+| Warn on `-A`       | CLI warns when `--allow-all` is used                                        |
+| Message size cap   | 10 MiB max per JSON-RPC line                                                |
 
 ### Example permission sets
 
@@ -151,15 +173,18 @@ flowchart LR
   Deno --> Server[McpServer]
   Server --> Handler[ProtocolHandler]
   Handler --> Stdio[StdioTransport]
-  Stdio --> Client[MCP client stdio]
+  Stdio --> ClientStdio[MCP client stdio]
+  Server --> Http[StreamableHttpServer]
+  Http --> ClientHttp[MCP client HTTP]
 ```
 
-| Layer | Role |
-| ----- | ---- |
-| `McpServer` | Tools, resources, prompts with Zod validation |
-| `ProtocolHandler` | JSON-RPC routing, initialize handshake |
-| `StdioTransport` | Newline-delimited JSON-RPC over Web Streams |
-| `Transport` | Pluggable interface (HTTP/SSE planned) |
+| Layer                  | Role                                           |
+| ---------------------- | ---------------------------------------------- |
+| `McpServer`            | Tools, resources, prompts with Zod validation  |
+| `ProtocolHandler`      | JSON-RPC routing, initialize handshake         |
+| `StdioTransport`       | Newline-delimited JSON-RPC over Web Streams    |
+| `StreamableHttpServer` | Streamable HTTP transport (JSON response mode) |
+| `Transport`            | Pluggable interface for custom transports      |
 
 ## Cursor / Claude Desktop
 
@@ -218,40 +243,44 @@ server.prompt({
 });
 
 await server.serveStdio();
+await server.serveHttp({ port: 3000, hostname: "127.0.0.1" });
 ```
 
 ### Low-level exports
 
 - `ProtocolHandler` - request routing without the high-level API
 - `StdioTransport` - stdio transport for custom setups
+- `StreamableHttpServer` - HTTP session manager for custom hosting
 - `ReadBuffer`, `serializeMessage`, `deserializeMessage` - protocol framing
 - `McpError`, `ErrorCode` - JSON-RPC error handling
 
 ## Roadmap
 
-| Status | Item |
-| ------ | ---- |
-| Now | Stdio transport, sandboxing CLI, tools/resources/prompts |
-| Planned | HTTP/SSE transport (same permission model, remote deployment) |
-| Planned | JSR publish (`@kellen/deno-mcp`) |
+| Status  | Item                                                                                  |
+| ------- | ------------------------------------------------------------------------------------- |
+| Now     | Stdio transport, Streamable HTTP (JSON mode), sandboxing CLI, tools/resources/prompts |
+| Planned | SSE streaming (POST/GET), legacy HTTP+SSE compatibility                               |
+| Planned | JSR publish (`@kellen/deno-mcp`)                                                      |
 
 ## Pick the right tool
 
-| Use case | Recommendation |
-| -------- | -------------- |
-| Deno MCP with default-deny sandbox | **deno-mcp** (this repo) |
-| Node API compatibility | `npm:@modelcontextprotocol/server` |
-| Deno project dev tools (test, coverage) | `jsr:@udibo/deno-mcp` |
+| Use case                                | Recommendation                     |
+| --------------------------------------- | ---------------------------------- |
+| Deno MCP with default-deny sandbox      | **deno-mcp** (this repo)           |
+| Node API compatibility                  | `npm:@modelcontextprotocol/server` |
+| Deno project dev tools (test, coverage) | `jsr:@udibo/deno-mcp`              |
 
-The Node SDK runs without Deno's permission sandbox. Any tool in that server process can access whatever the process already has.
+The Node SDK runs without Deno's permission sandbox. Any tool in that server process can access
+whatever the process already has.
 
 ## Development
 
 ```bash
-deno task test         # 35 tests
+deno task test         # 44 tests
 deno task lint
 deno task fmt
-deno task dev          # watch echo server
+deno task dev          # watch echo server (stdio)
+deno task dev:http     # echo server over HTTP
 deno task install-cli
 ```
 

@@ -10,6 +10,8 @@ import type {
 import { ProtocolHandler } from "./protocol_handler.ts";
 import { StdioTransport } from "../transport/stdio.ts";
 import type { StdioTransportOptions } from "../transport/stdio.ts";
+import { StreamableHttpServer } from "../transport/streamable_http.ts";
+import type { StreamableHttpOptions } from "../transport/streamable_http.ts";
 import type { Transport } from "../transport/transport.ts";
 import { parseInput, toInputSchema } from "../util/schema.ts";
 
@@ -19,6 +21,9 @@ export interface McpServerOptions {
   capabilities?: ServerCapabilities;
   instructions?: string;
 }
+
+/** Options for {@link McpServer.serveHttp} (excluding session factory). */
+export type McpServerHttpOptions = Omit<StreamableHttpOptions, "createSession">;
 
 export interface ToolOptions<T extends z.ZodType> {
   description?: string;
@@ -126,6 +131,11 @@ export class McpServer {
     await this.handler.connect(transport);
   }
 
+  /** Clone handler registrations for an isolated HTTP session. */
+  forkHandler(): ProtocolHandler {
+    return this.handler.fork();
+  }
+
   /** Serve over stdio with graceful shutdown on SIGINT/SIGTERM. */
   async serveStdio(options?: StdioTransportOptions): Promise<void> {
     const transport = new StdioTransport(options);
@@ -136,6 +146,34 @@ export class McpServer {
       if (shuttingDown) return;
       shuttingDown = true;
       this.handler.close()
+        .catch(() => {})
+        .finally(() => Deno.exit(0));
+    };
+
+    Deno.addSignalListener("SIGINT", shutdown);
+    Deno.addSignalListener("SIGTERM", shutdown);
+
+    await new Promise<void>(() => {
+      // Keep process alive until signal
+    });
+  }
+
+  /**
+   * Serve over Streamable HTTP (JSON response mode) with graceful shutdown
+   * on SIGINT/SIGTERM. Requires --allow-net.
+   */
+  async serveHttp(options?: McpServerHttpOptions): Promise<void> {
+    const httpServer = new StreamableHttpServer({
+      ...options,
+      createSession: () => this.handler.fork(),
+    });
+    httpServer.listen();
+
+    let shuttingDown = false;
+    const shutdown = () => {
+      if (shuttingDown) return;
+      shuttingDown = true;
+      httpServer.close()
         .catch(() => {})
         .finally(() => Deno.exit(0));
     };
