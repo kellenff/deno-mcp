@@ -1,24 +1,83 @@
-# deno-mcp
+```bash
+deno-mcp run --allow-read=./data ./server.ts
+```
 
-A Deno-native [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server SDK with a
-sandboxing CLI.
+> This script gets filesystem access only because you said so.
 
-Built for Deno from the ground up — Web Streams, no Node shims, secure by default.
+# deno-mcp - Deno-native MCP with a default-deny sandbox
 
-## Features
+Ship [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers in Deno. Permissions are opt-in, not inherited.
 
-- **Deno-native API** — `McpServer` with Zod-validated tools, resources, and prompts
-- **Stdio transport** — newline-delimited JSON-RPC over stdin/stdout
-- **Sandboxing CLI** — `deno-mcp run` forwards Deno permission flags with zero permissions by
-  default
-- **Secure by default** — no filesystem, network, or env access unless explicitly granted
+Built on Web Streams and Deno's permission model. No Node shims.
+
+## Install from GitHub
+
+Not on JSR yet. Clone the repo or install the CLI from a pinned ref.
+
+### Prerequisites
+
+- [Deno](https://docs.deno.com/runtime/) 2.5+ (for `-P=` permission sets)
+
+### CLI
+
+```bash
+git clone https://github.com/kellenff/deno-mcp.git
+cd deno-mcp
+deno task install-cli
+```
+
+Or install without cloning:
+
+```bash
+deno install --allow-run -n deno-mcp \
+  https://raw.githubusercontent.com/kellenff/deno-mcp/main/cli.ts
+```
+
+Pin a commit or tag in production instead of `main`. Review the source before you run it.
+
+### Library import
+
+```typescript
+import { McpServer } from "https://raw.githubusercontent.com/kellenff/deno-mcp/main/mod.ts";
+```
+
+Replace `main` with a commit SHA or tag when you deploy.
 
 ## Quick start
 
-### Library
+### Run the echo server (zero permissions)
+
+```bash
+deno-mcp run ./examples/echo_server.ts
+```
+
+No `--allow-*` flags. The server starts with no filesystem, network, or env access.
+
+### Permission profiles in deno.json
+
+This repo ships a named profile. That is what "Deno-native" means here: permissions live in config, not in ad hoc shell flags.
+
+```json
+{
+  "permissions": {
+    "mcp": {
+      "read": ["./"],
+      "env": true
+    }
+  }
+}
+```
+
+```bash
+deno-mcp run -P=mcp ./examples/echo_server.ts
+```
+
+### Write a server
+
+For most use cases, start with `McpServer`. Use `ProtocolHandler` when you need a custom transport.
 
 ```typescript
-import { McpServer } from "jsr:@kellen/deno-mcp";
+import { McpServer } from "https://raw.githubusercontent.com/kellenff/deno-mcp/main/mod.ts";
 import { z } from "zod";
 
 const server = new McpServer({ name: "echo", version: "0.1.0" });
@@ -36,48 +95,25 @@ if (import.meta.main) {
 }
 ```
 
-Run directly:
+Run it:
 
 ```bash
-deno run --no-prompt examples/echo_server.ts
+deno-mcp run ./my_server.ts
 ```
 
-### CLI
+## Default-deny sandbox
 
-Install globally:
+You already saw the flags. Here is what they enforce.
 
-```bash
-deno install --allow-run -n deno-mcp ./cli.ts
-```
+| Principle | Detail |
+| --------- | ------ |
+| Default deny | `deno-mcp run` grants zero permissions unless you pass `--allow-*` or `-P=` |
+| No prompts | `--no-prompt` is always injected. MCP clients use non-TTY stdio |
+| Stdout is protocol | Never log to stdout. Use `log()` from the `/log` export (stderr) |
+| Warn on `-A` | CLI warns when `--allow-all` is used |
+| Message size cap | 10 MiB max per JSON-RPC line |
 
-Run a server with sandboxing:
-
-```bash
-# Secure default — no permissions
-deno-mcp run ./examples/echo_server.ts
-
-# Grant specific permissions
-deno-mcp run --allow-read=./data --allow-env=HOME ./server.ts
-
-# Use a permission set from deno.json (Deno 2.5+)
-deno-mcp run -P=mcp ./server.ts
-
-# Pass args to the server script
-deno-mcp run ./server.ts -- --verbose
-```
-
-## Security model
-
-| Principle          | Detail                                                                   |
-| ------------------ | ------------------------------------------------------------------------ |
-| Default deny       | `deno-mcp run` grants zero permissions unless you pass `--allow-*` flags |
-| No prompts         | `--no-prompt` is always injected — MCP clients use non-TTY stdio         |
-| Stdout is protocol | Never log to stdout; use `log()` from `@kellen/deno-mcp/log` (stderr)    |
-| Warn on `-A`       | CLI warns when `--allow-all` is used                                     |
-
-### Recommended permission sets
-
-Add to your `deno.json`:
+### Example permission sets
 
 ```json
 {
@@ -95,16 +131,44 @@ Add to your `deno.json`:
 }
 ```
 
-Then run with `-P=mcp` or `-P=mcp-with-data`.
+```bash
+deno-mcp run -P=mcp-with-data ./server.ts
+```
 
-## Cursor / Claude Desktop integration
+Grant flags explicitly when you do not use a profile:
+
+```bash
+deno-mcp run --allow-read=./data --allow-env=HOME ./server.ts
+deno-mcp run ./server.ts -- --verbose   # args after --
+```
+
+## Architecture
+
+```mermaid
+flowchart LR
+  CLI[cli.ts / deno-mcp run] --> Run[src/cli/run.ts]
+  Run --> Deno[Deno subprocess]
+  Deno --> Server[McpServer]
+  Server --> Handler[ProtocolHandler]
+  Handler --> Stdio[StdioTransport]
+  Stdio --> Client[MCP client stdio]
+```
+
+| Layer | Role |
+| ----- | ---- |
+| `McpServer` | Tools, resources, prompts with Zod validation |
+| `ProtocolHandler` | JSON-RPC routing, initialize handshake |
+| `StdioTransport` | Newline-delimited JSON-RPC over Web Streams |
+| `Transport` | Pluggable interface (HTTP/SSE planned) |
+
+## Cursor / Claude Desktop
 
 ```json
 {
   "mcpServers": {
     "echo": {
       "command": "deno-mcp",
-      "args": ["run", "./examples/echo_server.ts"]
+      "args": ["run", "/path/to/deno-mcp/examples/echo_server.ts"]
     }
   }
 }
@@ -117,7 +181,7 @@ With permissions:
   "mcpServers": {
     "my-server": {
       "command": "deno-mcp",
-      "args": ["run", "--allow-read=./data", "./server.ts"]
+      "args": ["run", "--allow-read=./data", "/path/to/server.ts"]
     }
   }
 }
@@ -134,21 +198,18 @@ const server = new McpServer({
   instructions: "Optional usage instructions for the client",
 });
 
-// Register a tool
 server.tool("name", {
   description: "...",
   input: z.object({ ... }),
   handler: (input) => ({ content: [{ type: "text", text: "..." }] }),
 });
 
-// Register a resource
 server.resource({
   uri: "file:///example.txt",
   name: "example",
   handler: () => ({ contents: [{ uri: "...", text: "..." }] }),
 });
 
-// Register a prompt
 server.prompt({
   name: "greeting",
   handler: (args) => ({
@@ -156,35 +217,44 @@ server.prompt({
   }),
 });
 
-// Serve over stdio
 await server.serveStdio();
 ```
 
 ### Low-level exports
 
-- `ProtocolHandler` — request routing without the high-level API
-- `StdioTransport` — stdio transport for custom setups
-- `ReadBuffer`, `serializeMessage`, `deserializeMessage` — protocol framing
-- `McpError`, `ErrorCode` — JSON-RPC error handling
+- `ProtocolHandler` - request routing without the high-level API
+- `StdioTransport` - stdio transport for custom setups
+- `ReadBuffer`, `serializeMessage`, `deserializeMessage` - protocol framing
+- `McpError`, `ErrorCode` - JSON-RPC error handling
+
+## Roadmap
+
+| Status | Item |
+| ------ | ---- |
+| Now | Stdio transport, sandboxing CLI, tools/resources/prompts |
+| Planned | HTTP/SSE transport (same permission model, remote deployment) |
+| Planned | JSR publish (`@kellen/deno-mcp`) |
+
+## Pick the right tool
+
+| Use case | Recommendation |
+| -------- | -------------- |
+| Deno MCP with default-deny sandbox | **deno-mcp** (this repo) |
+| Node API compatibility | `npm:@modelcontextprotocol/server` |
+| Deno project dev tools (test, coverage) | `jsr:@udibo/deno-mcp` |
+
+The Node SDK runs without Deno's permission sandbox. Any tool in that server process can access whatever the process already has.
 
 ## Development
 
 ```bash
-deno task test      # run tests
-deno task lint      # lint
-deno task fmt       # format
-deno task dev       # watch echo server
-deno task install-cli  # install deno-mcp globally
+deno task test         # 35 tests
+deno task lint
+deno task fmt
+deno task dev          # watch echo server
+deno task install-cli
 ```
-
-## Comparison
-
-| Use case                                | Recommendation                     |
-| --------------------------------------- | ---------------------------------- |
-| Native Deno + sandboxing CLI            | **deno-mcp** (this package)        |
-| Node API compatibility                  | `npm:@modelcontextprotocol/server` |
-| Deno project dev tools (test, coverage) | `jsr:@udibo/deno-mcp`              |
 
 ## License
 
-This project is released into the public domain under [The Unlicense](https://unlicense.org). See [UNLICENSE](./UNLICENSE).
+Public domain under [The Unlicense](https://unlicense.org). See [UNLICENSE](./UNLICENSE).
