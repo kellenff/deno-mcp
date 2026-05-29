@@ -187,4 +187,4 @@ deno task install-cli  # install deno-mcp globally
 
 ## License
 
-MIT
+This project is released into the public domain under [The Unlicense](https://unlicense.org). See [UNLICENSE](./UNLICENSE).

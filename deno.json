@@ -1,6 +1,7 @@
 {
   "name": "@kellen/deno-mcp",
   "version": "0.1.0",
+  "license": "Unlicense",
   "exports": {
     ".": "./mod.ts",
     "./cli": "./cli.ts",
